@@ -1,0 +1,1032 @@
+<p>A Busca Textual tornou-se uma caracter&iacute;stica importante para muitos tipos de neg&oacute;cios. A
+	comprova&ccedil;&atilde;o desta necessidade &eacute; o aumento na popularidade de ferramentas como o <a
+		href="http://elasticsearch.org/">Elasticsearch</a> e <a href="https://lucene.apache.org/solr/">Solr</a>
+	onde ambas s&atilde;o baseadas no <a href="https://lucene.apache.org/">Lucene</a>. Solr e Elasticsearch
+	s&atilde;o &oacute;timas ferramentas, mas antes de caminharmos para este lado da busca textual, devemos pensar
+	um pouco mais e talvez decidir por algo mais leve e que seja bom o suficiente.</p>
+
+<p><em>Este</em> <a href="http://rachbelaid.com/postgres-full-text-search-is-good-enough/">artigo</a><em> foi
+		originalmente publicado por Rachid Belaid em seu blog pessoal e com algumas atualiza&ccedil;&otilde;es
+		est&aacute; sendo publicado com a permiss&atilde;o do autor em Portugu&ecirc;s pelo InfoQ Brasil.</em>
+</p>
+
+<p>Ao expressar o termo &#39;bom o suficiente&#39;, estamos falando de um motor de busca com as seguintes
+	caracter&iacute;sticas:</p>
+
+<ul class="c17 lst-kix_xka3v6qnzijn-0 start">
+	<li><a href="http://www.comp.lancs.ac.uk/computing/research/stemming/general/">Stemming</a> (entregar resultados
+		baseados na fon&eacute;tica da palavra)</li>
+	<li><a href="http://www.inf.ufes.br/~claudine/courses/paa10/seminarios/seminario14.pdf">Ranqueamento</a> / <a
+			href="http://ailab.ijs.si/Dunja/TextDM01/papers/Srini_TMIR.pdf">Atribui&ccedil;&atilde;o de
+			peso</a></li>
+	<li>Suporte a v&aacute;rios idiomas</li>
+	<li>Pesquisa Fuzzy para erros de ortografia</li>
+	<li>Apoio a acentua&ccedil;&atilde;o</li>
+</ul>
+
+
+<div class="clear"></div>
+
+
+
+
+
+
+
+<script type="text/javascript">
+	var uriMapping = "articles";
+	var showVcr = "true";
+	var fillWithVcr = "false";
+	var sponsorshipsJson = "{&quot;links&quot;:null}";
+	var sponsoredLinks = $.parseJSON($("<div/>").html(sponsorshipsJson).text()).links;
+	var numberOfSponsoredVcrIds = sponsoredLinks != null ? sponsoredLinks.length : 0;
+
+	var maxItems = 5 - numberOfSponsoredVcrIds;
+
+	var intervalVcrSponsorship = setInterval(function () {
+		if (window.vcrsLoaded) {
+			clearInterval(intervalVcrSponsorship);
+			if (showVcr || fillWithVcr) {
+				if (fillWithVcr) {
+					for (var index in window.vcrList) {
+						if (VCR.isVcrSponsored(sponsoredLinks, window.vcrList[index])) {
+							VCR.addToExcludedList(window.vcrList[index]);
+						}
+					}
+				}
+				var vcrs = VCR.getByTopicsAndCommunities(window.vcrList, topicIds, communityIds, maxItems, false, null);
+				if (vcrs != null && vcrs.length > 0 || (sponsoredLinks != null && sponsoredLinks.length > 0)) {
+					VCR.addToExcludedList(vcrs);
+					var $widget = jQuery('.related__vc');
+					getCommonElements(vcrs, uriMapping, "EMBEDDED");
+					$widget.css("display", "flex");
+				} else {
+					var $widget = jQuery('.related__vc');
+					$widget.remove();
+				}
+			}
+			window.contentVcrFinished = true;
+			// search for infoq.event.on("contentVcrFinished",... to see how/where it is used
+			infoq.event.trigger("contentVcrFinished");
+		}
+	}, 200);
+
+</script>
+<input type="hidden" name="" value="" id="cont_item_primary_topic" />
+
+
+<div class="related__group related__vc nocontent f_rvcbox" data-trk-view="true" data-trk-impr="true"
+	data-place="EMBEDDED" style="display: none">
+
+	<ul class="no-style rvc__list">
+		<h4 class="heading">Conteúdo relacionado de patrocinadores</h4>
+
+		<div class="f_rvcList"></div>
+
+
+
+	</ul>
+
+
+</div>
+
+
+<p>Felizmente, o PostgreSQL suporta todas essas caracter&iacute;sticas.</p>
+
+<p>Este artigo &eacute; destinado a solu&ccedil;&atilde;o dos seguintes problemas:</p>
+
+<ul class="c17 lst-kix_ivubkvzfhjpn-0 start">
+	<li>Para aqueles que fazem uso do PostgreSQL e n&atilde;o desejam instalar uma depend&ecirc;ncia extra para o
+		seu motor de busca.</li>
+	<li>Utiliza um banco de dados alternativo (por exemplo: MySQL, SQL Server) e t&ecirc;m a necessidade de melhores
+		recursos para busca textual(FTS - Full Text Search).</li>
+</ul>
+
+<p>Vamos ilustrar progressivamente alguns dos recursos de busca de texto completo utilizando o PostgreSQL com base nas
+	seguintes tabelas e dados:</p>
+
+
+
+
+<div id="lowerFullwidthVCR"></div>
+
+<p><span style="overflow: hidden; display: inline-block; margin: 0.00px 0.00px; border: 0.00px solid #000000; transform: rotate(0.00rad) translateZ(0px); -webkit-transform: rotate(0.00rad) translateZ(0px); width: 494.00px; height: 195.00px;"><img
+			_href="img://image02.jpg" alt="pg_fts_db_map.png"
+			style="width: 494.00px; height: 195.00px; margin-left: 0.00px; margin-top: 0.00px; transform: rotate(0.00rad) translateZ(0px); -webkit-transform: rotate(0.00rad) translateZ(0px);"
+			title="" data-src="articles/postgresql-fts/pt/resources/image02.jpg"
+			src="https://imgopt.infoq.com/fit-in/3000x4000/filters:quality(85)/filters:no_upscale()/articles/postgresql-fts/pt/resources/image02.jpg"
+			rel="share"></span></p>
+
+<pre>
+	CREATE TABLE author(
+	id SERIAL PRIMARY KEY,
+	name TEXT NOT NULL
+	);
+
+	CREATE TABLE post(
+	id SERIAL PRIMARY KEY,
+	title TEXT NOT NULL,
+	content TEXT NOT NULL,
+	author_id INT NOT NULL references author(id)
+	);
+
+	CREATE TABLE tag(
+	id SERIAL PRIMARY KEY,
+	name TEXT NOT NULL
+	);
+
+	CREATE TABLE posts_tags(
+	post_id INT NOT NULL references post(id),
+	tag_id INT NOT NULL references tag(id)
+	);
+
+	INSERT INTO author (id, name)
+	VALUES (1, &#39;Pete Graham&#39;),
+	(2, &#39;Rachid Belaid&#39;),
+	(3, &#39;Robert Berry&#39;);
+
+	INSERT INTO tag (id, name)
+	VALUES (1, &#39;scifi&#39;),
+	(2, &#39;politics&#39;),
+	(3, &#39;science&#39;);
+
+	INSERT INTO post (id, title, content, author_id)
+	VALUES (1, &#39;Endangered species&#39;,
+	&#39;Pandas are an endangered species&#39;, 1 ),
+	(2, &#39;Freedom of Speech&#39;,
+	&#39;Freedom of speech is a necessary right&#39;, 2),
+	(3, &#39;Star Wars vs Star Trek&#39;,
+	&#39;Few words from a big fan&#39;, 3);
+
+	INSERT INTO posts_tags (post_id, tag_id)
+	VALUES (1, 3),
+	(2, 2),
+	(3, 1);
+</pre>
+
+<p>Trata-se da estrutura em banco de dados de uma aplica&ccedil;&atilde;o de blog tradicional com objetos postados e que
+	possui um t&iacute;tulo e conte&uacute;do. A publica&ccedil;&atilde;o est&aacute; associada a um autor por meio
+	de uma chave estrangeira. Uma publica&ccedil;&atilde;o pode ter v&aacute;rias tags.</p>
+
+<h1>O que &eacute; Full Text Search</h1>
+
+<p>Segundo a <a href="http://en.wikipedia.org/wiki/Full_text_search">Wikip&eacute;dia</a>:</p>
+
+<blockquote>
+	<p>Em tratando-se de recupera&ccedil;&atilde;o de informa&ccedil;&atilde;o, Full Text Search refere-se as
+		t&eacute;cnicas para procurar em um &uacute;nico documento armazenado em computador ou a uma
+		cole&ccedil;&atilde;o em um banco de dados de texto completo. Full Text Search &eacute; diferente de
+		pesquisas com base em metadados ou em partes dos textos originais representados em bases de dados (tais
+		como t&iacute;tulos, resumos, se&ccedil;&otilde;es selecionadas, ou refer&ecirc;ncias
+		bibliogr&aacute;ficas).</p>
+</blockquote>
+
+<p>Esta defini&ccedil;&atilde;o apresenta o conceito para um &uacute;nico documento por&eacute;m, quando executamos uma
+	pesquisa sobre dados, estamos olhando para entidades significativas para o qual desejamos pesquisar, estes
+	s&atilde;o os documentos! A <a
+		href="http://www.postgresql.org/docs/9.3/static/textsearch-intro.html#TEXTSEARCH-DOCUMENT">documenta&ccedil;&atilde;o
+		do PostgreSQL</a> explica este conceito da seguinte forma.</p>
+
+<blockquote>
+	<p>Um documento &eacute; a unidade de busca completa em um sistema de busca textual como por exemplo, um artigo
+		de revista ou uma mensagem de e-mail.</p>
+</blockquote>
+
+<p>Este documento pode ser composto de v&aacute;rias tabelas e representa a entidade l&oacute;gica que desejamos
+	procurar.</p>
+
+<h2>Construindo o documento para busca</h2>
+
+<p>Na se&ccedil;&atilde;o anterior, introduzimos o conceito de documento. Neste contexto, um documento n&atilde;o
+	est&aacute; relacionado com um esquema composto por tabelas, mas a dados que em conjunto representam um objeto
+	com algum tipo de significado. Com base no exemplo do esquema de dados proposto, o documento &eacute; composto
+	de:</p>
+
+<ul class="c17 lst-kix_2asy5rqaa66w-0 start">
+	<li>post.title (t&iacute;tulo da publica&ccedil;&atilde;o)</li>
+	<li>post.content (conte&uacute;do da publica&ccedil;&atilde;o)</li>
+	<li>author.name (nome do autor da publica&ccedil;&atilde;o)</li>
+	<li>tag.name (nome de todas as tags associadas &agrave; publica&ccedil;&atilde;o)</li>
+</ul>
+
+<p>Para criar o documento com base nestes crit&eacute;rios vamos imaginar a seguinte consulta SQL:</p>
+
+<pre>
+	SELECT post.title || &#39; &#39; || post.content || &#39; &#39; ||
+	author.name || &#39; &#39; ||
+	coalesce((string_agg(tag.name, &#39; &#39;)), &#39;&#39;) as document
+	FROM post
+	JOIN author ON author.id = post.author_id JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON tag.id = posts_tags.tag_id GROUP BY post.id, author.id;
+</pre>
+
+<p>Tem-se como resposta:</p>
+
+<pre>
+	document
+	----------------------------------------------
+	Endangered species Pandas are an endangered
+	species Pete Graham politics
+	Freedom of Speech Freedom of speech is a
+	necessary right missing in many countries
+	Rachid Belaid politics
+	Star Wars vs Star Trek Few words from a big
+	fan Robert Berry politics
+	(3 rows)
+</pre>
+
+<p>Como a consulta acima est&aacute; realizando um agrupamento por tipo de publica&ccedil;&atilde;o e autor, foi
+	utilizado a fun&ccedil;&atilde;o <a
+		href="http://www.postgresql.org/docs/9.4/static/functions-aggregate.html">string_agg()</a> como
+	fun&ccedil;&atilde;o de agrega&ccedil;&atilde;o porque segundo o esquema de relacionamento proposto,
+	v&aacute;rias tags podem ser associadas a uma publica&ccedil;&atilde;o.</p>
+
+<p>Mesmo que o autor seja uma chave estrangeira, uma publica&ccedil;&atilde;o n&atilde;o pode ter mais de um autor, e
+	para que esta unicidade prevale&ccedil;a, &eacute; necess&aacute;rio adicionar uma fun&ccedil;&atilde;o de
+	agrega&ccedil;&atilde;o para o autor ou adicionar o autor com um <em>GROUP BY</em>.</p>
+
+<p>Como uma boa pr&aacute;tica, pode-se utilizar <a
+		href="http://www.postgresql.org/docs/9.4/static/functions-conditional.html">coalesce()</a> para os casos
+	em que existam valores <em>NULL</em> evitando que a concatena&ccedil;&atilde;o retorne valores NULL.</p>
+
+<p>At&eacute; este momento, o documento criado n&atilde;o passa de uma simples e longa string de caracteres e n&atilde;o
+	&eacute; muito &uacute;til. Para corrigir esta anomalia, &eacute; preciso transformar o documento para um
+	formato adequado por meio da fun&ccedil;&atilde;o <a
+		href="http://www.postgresql.org/docs/9.4/static/textsearch-controls.html">to_tsvector()</a>.</p>
+
+<pre>
+	SELECT to_tsvector(post.title) ||
+	to_tsvector(post.content) ||
+	to_tsvector(author.name) ||
+	to_tsvector(coalesce((string_agg(tag.name, &#39; &#39;)), &#39;&#39;)) as document
+	FROM post
+	JOIN author ON author.id = post.author_id JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON tag.id = posts_tags.tag_id
+	GROUP BY post.id, author.id;
+</pre>
+
+<p>O que retorna:</p>
+
+<pre>
+	document
+	--------------------------------------------------
+	&#39;endang&#39;:1,6 &#39;graham&#39;:9 &#39;panda&#39;:3 &#39;pete&#39;:8
+	&#39;polit&#39;:10 &#39;speci&#39;:2,7
+	&#39;belaid&#39;:16 &#39;countri&#39;:14 &#39;freedom&#39;:1,4
+	&#39;mani&#39;:13 &#39;miss&#39;:11 &#39;necessari&#39;:9 &#39;polit&#39;:17
+	&#39;rachid&#39;:15 &#39;right&#39;:10 &#39;speech&#39;:3,6
+	&#39;berri&#39;:13 &#39;big&#39;:10 &#39;fan&#39;:11 &#39;polit&#39;:14
+	&#39;robert&#39;:12 &#39;star&#39;:1,4 &#39;trek&#39;:5 &#39;vs&#39;:3 &#39;war&#39;:2
+	&#39;word&#39;:7
+	(3 rows)
+</pre>
+
+<p>Esta consulta ir&aacute; retornar o documento em formato de um tsvector, que &eacute; um tipo adequado para busca
+	textual. Abaixo, um exemplo de como converter um conjunto de caracteres em um tipo <em>tsvector</em>.</p>
+
+<pre>
+	SELECT to_tsvector(&#39;Try not to become a man of success, but rather try to become a man of value&#39;);
+</pre>
+
+<p>Que retornar&aacute; o seguinte resultado:</p>
+
+<pre>
+	to_tsvector
+	----------------------------------------------------------------------
+	&#39;becom&#39;:4,13 &#39;man&#39;:6,15 &#39;rather&#39;:10 &#39;success&#39;:8 &#39;tri&#39;:1,11
+	&#39;valu&#39;:17
+	(1 row)
+</pre>
+
+<p>Vejamos o que ocorreu com o resultado da consulta. Em primeiro lugar h&aacute; menos palavras do que na
+	senten&ccedil;a original, algumas das palavras s&atilde;o diferentes (try tornou-se tri) e todas elas
+	est&atilde;o seguidas por n&uacute;meros. Por qu&ecirc;?</p>
+
+<blockquote>
+	<p>Um valor <em>tsvector</em> &eacute; uma lista ordenada de <a
+			href="https://pt.wikipedia.org/wiki/Lexema">lexemas</a> distintos o qual s&atilde;o palavras que
+		foram normalizadas para fazer varia&ccedil;&otilde;es diferentes de uma mesma palavra e que s&atilde;o
+		parecidas. Por exemplo, a&ccedil;oitar, a&ccedil;oite, abdome, abd&ocirc;men o <em>tsvector</em>
+		organiza estes resultados para que uma palavra que possua varia&ccedil;&otilde;es n&atilde;o seja
+		contada/exibida mais de uma vez no resultado.</p>
+</blockquote>
+
+<p>Por exemplo, a normaliza&ccedil;&atilde;o inclui quase sempre converter letras mai&uacute;sculas para
+	min&uacute;sculas e muitas vezes envolve a remo&ccedil;&atilde;o de sufixos (como o &#39;s&#39;, &#39;es&#39; ou
+	&#39;ing&#39; em Ingl&ecirc;s). Isto permite buscas para encontrar formas variadas da mesma palavra sem
+	necessariamente envolver todas as varia&ccedil;&otilde;es poss&iacute;veis existentes para a palavra.</p>
+
+<p>Os n&uacute;meros representam a localiza&ccedil;&atilde;o do lexema na string original. Por exemplo, &quot;man&quot;
+	est&aacute; presente na posi&ccedil;&atilde;o 6 e 15. Conte as palavras no diagrama abaixo para comprovar.</p>
+
+<p><span style="overflow: hidden; display: inline-block; margin: 0.00px 0.00px; border: 0.00px solid #000000; transform: rotate(0.00rad) translateZ(0px); -webkit-transform: rotate(0.00rad) translateZ(0px); width: 601.70px; height: 42.67px;"><img
+			_href="img://2image03.jpg" alt="lexema_1.png"
+			style="margin-left: 0px; margin-top: 0px; transform: rotate(0rad) translateZ(0px); width: 601px; height: 42px;"
+			title="" data-src="articles/postgresql-fts/pt/resources/2image03.jpg"
+			src="https://imgopt.infoq.com/fit-in/3000x4000/filters:quality(85)/filters:no_upscale()/articles/postgresql-fts/pt/resources/2image03.jpg"
+			rel="share"></span></p>
+
+<p>Por padr&atilde;o, o PostgreSQL usa o idioma &#39;Ingl&ecirc;s&#39; como configura&ccedil;&atilde;o para busca
+	textual utilizando a fun&ccedil;&atilde;o <em>to_tsvector</em> o que tamb&eacute;m faz com que as chamadas <a
+		href="https://pt.wikipedia.org/wiki/Palavra_vazia">stop words</a> sejam ignoradas para este idioma.</p>
+
+<p>Esta particularidade explica o motivo pelo qual os resultados da fun&ccedil;&atilde;o <em>tsvector</em> possuem menos
+	elementos do que a senten&ccedil;a de exemplo. Neste artigo, mais a frente, ser&aacute; detalhado um pouco mais
+	sobre idiomas e a configura&ccedil;&atilde;o de buscas textuais no PostgreSQL.</p>
+
+<h2>Realizando consultas</h2>
+
+<p>No se&ccedil;&atilde;o anterior, foi discutido como construir um documento, mas o objetivo deste artigo &eacute;
+	encontrar o documento. Para executar uma consulta em um tipo <em>tsvector</em> podemos usar o operador @@
+	conforme <a
+		href="http://www.postgresql.org/docs/9.3/static/functions-textsearch.html#FUNCTIONS-TEXTSEARCH">documentado</a>
+	no site do PostgreSQL. A seguir, s&atilde;o apresentados alguns exemplos sobre como consultar o documento
+	criado.</p>
+
+<pre>
+	&gt; select to_tsvector(&#39;If you can dream it, you can do it&#39;) @@ &#39;dream&#39;;
+	?column?
+	----------
+	t
+	(1 row)
+
+	&gt; select to_tsvector(&#39;It&#39;&#39;s kind of fun to do the impossible&#39;) @@ &#39;impossible&#39;;
+
+	?column?
+	----------
+	f
+	(1 row)
+</pre>
+
+<p>A segunda consulta retorna <em>false</em> porque &eacute; preciso construir uma consulta do tipo <a
+		href="http://www.postgresql.org/docs/9.4/static/datatype-textsearch.html">tsquery</a> que criar&aacute;
+	os mesmos lexemas e que ao utilizar o operador @@, transformar&aacute;(cast) a string em um formato
+	<em>tsquery</em>. O exemplo a seguir exibe a diferen&ccedil;a entre o uso de transforma&ccedil;&atilde;o(cast) e
+	uso da fun&ccedil;&atilde;o to_tsquery().
+</p>
+
+<pre>
+	&gt;SELECT &#39;impossible&#39;::tsquery, to_tsquery(&#39;impossible&#39;);
+	tsquery | to_tsquery
+	--------------+------------
+	&#39;impossible&#39; | &#39;imposs&#39;
+	(1 row)
+</pre>
+
+<p>Mas no caso da palavra &#39;<em>dream</em>&#39; o fonema &eacute; igual a palavra.</p>
+
+<pre>
+	SELECT &#39;dream&#39;::tsquery, to_tsquery(&#39;dream&#39;);
+	tsquery | to_tsquery
+	--------------+------------
+	&#39;dream&#39; | &#39;dream&#39;
+	(1 row)
+</pre>
+
+<p>Deste ponto em diante, &eacute; poss&iacute;vel utilizar a fun&ccedil;&atilde;o <em>to_tsquery</em> para consultar
+	documentos.</p>
+
+<pre>
+	&gt;SELECT to_tsvector(&#39;It&#39;&#39;s kind of fun to do the impossible&#39;) @@
+	to_tsquery(&#39;impossible&#39;);
+
+	?column?
+	----------
+	t
+	(1 row)
+</pre>
+
+<p>O <em>tsquery</em> armazena o valor dos lexemas que est&atilde;o sendo buscados, e combina-os respeitando os
+	operadores booleanos / (AND), | (OR), e ! (N&Atilde;O). Os par&ecirc;nteses podem ser utilizados para aplicar
+	agrupamento nos operadores.</p>
+
+<pre>
+	&gt; SELECT to_tsvector(&#39;If the facts don&#39;t fit the theory, change the facts&#39;) @@ to_tsquery(&#39;!
+	fact&#39;);
+
+	?column?
+	----------
+	f
+	(1 row)
+
+	&gt; SELECT to_tsvector(&#39;If the facts don&#39;&#39;t fit the theory, change the facts&#39;) @@
+	to_tsquery(&#39;theory &amp; !fact&#39;);
+
+	?column?
+	----------
+	f
+	(1 row)
+
+	&gt; SELECT to_tsvector(&#39;If the facts don&#39;&#39;t fit the theory, change the facts.&#39;) @@
+	to_tsquery(&#39;fiction | theory&#39;);
+
+	?column?
+	----------
+	t
+	(1 row)
+</pre>
+
+<p>&Eacute; poss&iacute;vel tamb&eacute;m utilizar consultas que comecem com algum coringa fazendo uso de :*. como no
+	exemplo a seguir:</p>
+
+<pre>
+	&gt;SELECT to_tsvector(&#39;If the facts don&#39;&#39;t fit the theory, change the facts.&#39;) @@
+	to_tsquery(&#39;theo:*&#39;);
+
+	?column?
+	----------
+	t
+	(1 row)
+</pre>
+
+<p>Agora que foi exemplificado como fazer buscas do tipo full-text, vamos voltar para a tabela e esquema criados no
+	in&iacute;cio deste artigo e fazer consultas no documento.</p>
+
+<pre>
+	SELECT pid, p_title
+	FROM (SELECT post.id as pid,
+	post.title as p_title,
+	to_tsvector(post.title) ||
+	to_tsvector(post.content) ||
+	to_tsvector(author.name) ||
+	to_tsvector(coalesce(string_agg(tag.name, &#39; &#39;))) as document
+	FROM post
+	JOIN author ON author.id = post.author_id
+	JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON tag.id = posts_tags.tag_id
+	GROUP BY post.id, author.id) p_search
+	WHERE p_search.document @@ to_tsquery(&#39;Endangered &amp; Species&#39;);
+
+	pid | p_title
+	-----+--------------------
+	1 | Endangered species
+	(1 row)
+</pre>
+
+<p>O resultado da consulta vai retornar o documento que cont&eacute;m como t&iacute;tulo &#39;Endangered species&#39; ou
+	lexemas que estejam o suficientemente pr&oacute;ximos ao procurado.</p>
+
+<h2>Suporte a idiomas</h2>
+
+<p>O PostgreSQL possui internamente op&ccedil;&otilde;es de busca textual para v&aacute;rios idiomas: Dinamarqu&ecirc;s,
+	Holand&ecirc;s, Ingl&ecirc;s, Finland&ecirc;s, Franc&ecirc;s, Alem&atilde;o, H&uacute;ngaro, Italiano,
+	Noruegu&ecirc;s, <strong>Portugu&ecirc;s</strong>, Romeno, Russo, Espanhol, Sueco, Turco.</p>
+
+<pre>
+	SELECT to_tsvector(&#39;english&#39;, &#39;We are running&#39;);
+	to_tsvector
+	-------------
+	&#39;run&#39;:3
+	(1 row)
+
+	SELECT to_tsvector(&#39;french&#39;, &#39;We are running&#39;);
+	to_tsvector
+	----------------------------
+	&#39;are&#39;:2 &#39;running&#39;:3 &#39;we&#39;:1
+	(1 row)
+</pre>
+
+<p>Um nome de coluna pode ser utilizado para criar um <em>tsvector</em> com base no modelo inicial utilizado neste
+	artigo.</p>
+
+<p>Supondo que o <em>post</em>(publica&ccedil;&atilde;o) possa ser escrito em diferentes idiomas e que o
+	<em>post</em>(publica&ccedil;&atilde;o) contenha uma coluna do tipo idioma.
+</p>
+
+<pre>
+	ALTER TABLE post ADD language text NOT NULL DEFAULT(&#39;english&#39;);
+</pre>
+
+<p>Desta forma &eacute; poss&iacute;vel reconstruir o documento para usar a nova coluna de idioma.</p>
+
+<pre>
+	SELECT to_tsvector(post.language::regconfig, post.title) ||
+	to_tsvector(post.language::regconfig, post.content) ||
+	to_tsvector(&#39;simple&#39;, author.name) ||
+	to_tsvector(&#39;simple&#39;, coalesce((string_agg(tag.name, &#39; &#39;)), &#39;&#39;)) as document
+	FROM post
+	JOIN author ON author.id = post.author_id
+	JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON tag.id = posts_tags.tag_id
+	GROUP BY post.id, author.id;
+</pre>
+
+<p>&Eacute; importante observar que sem a devida transforma&ccedil;&atilde;o(<em>cast</em>) utilizando <a
+		href="http://www.postgresql.org/docs/9.4/static/datatype-oid.html">::regconfig</a> a consulta
+	lan&ccedil;ar&aacute; uma exce&ccedil;&atilde;o com erro:</p>
+
+<pre>
+	ERROR: function to_tsvector(text, text) does not exist
+</pre>
+
+<p>O tipo <em>regconfig</em> &eacute; um identificador de objeto que representa a configura&ccedil;&atilde;o de pesquisa
+	de texto existente no PostgreSQL e est&aacute; mais detalhado na <a
+		href="http://www.postgresql.org/docs/9.3/static/datatype-oid.html">documenta&ccedil;&atilde;o</a> sobre
+	Tipos de Identificadores de Objetos.</p>
+
+<p>Com esta altera&ccedil;&atilde;o, os lexemas do documento que foram criados, utilizar&atilde;o a linguagem correta e
+	identificada baseando-se na vari&aacute;vel <em>post.language</em> da configura&ccedil;&atilde;o do PostgreSQL.
+</p>
+
+<p>&Eacute; poss&iacute;vel tamb&eacute;m fazer uso do <a
+		href="http://www.postgresql.org/docs/9.4/static/textsearch-dictionaries.html#TEXTSEARCH-SIMPLE-DICTIONARY">dicion&aacute;rio</a>
+	<a
+		href="http://www.postgresql.org/docs/9.4/static/textsearch-dictionaries.html#TEXTSEARCH-SIMPLE-DICTIONARY">simple</a>,
+	que &eacute; uma das funcionalidades embutidas de configura&ccedil;&atilde;o para busca textual que o PostgreSQL
+	oferece. O dicion&aacute;rio <em>simple</em> n&atilde;o ignora <em>stop words</em> e n&atilde;o tenta encontrar
+	fonemas(<a href="https://en.wikipedia.org/wiki/Stemming">stem</a>) de uma palavra. Com <em>simple</em> cada
+	grupo de caracteres separados por um espa&ccedil;o &eacute; um lexema. A configura&ccedil;&atilde;o do
+	dicion&aacute;rio <em>simple</em> para busca textual &eacute; eficiente para dados como por exemplo o nome de
+	uma pessoa para o qual n&atilde;o precisamos identificar o fonema(<a
+		href="https://en.wikipedia.org/wiki/Stemming">stem</a>) do nome desta pessoa.
+</p>
+
+<pre>
+	SELECT to_tsvector(&#39;simple&#39;, &#39;We are running&#39;);
+	to_tsvector
+	----------------------------
+	&#39;are&#39;:2 &#39;running&#39;:3 &#39;we&#39;:1
+	(1 row)
+</pre>
+
+<h2>Trabalhando com caracteres acentuados</h2>
+
+<p>Ao construir um motor de busca que suporte muitos idiomas &eacute; preciso se preocupar com o problema da
+	acentua&ccedil;&atilde;o. Em muitos idiomas, acentos s&atilde;o muito importantes e podem alterar o significado
+	de uma palavra. O PostgreSQL possui uma extens&atilde;o de nome <a
+		href="http://www.postgresql.org/docs/9.4/static/unaccent.html">unaccent</a> que &eacute; &uacute;til
+	para remover a acentua&ccedil;&atilde;o de textos.</p>
+
+<pre>
+	CREATE EXTENSION unaccent;
+	SELECT unaccent(&#39;&egrave;&eacute;&ecirc;&euml;&#39;);
+
+	unaccent
+	----------
+	eeee
+	(1 row)
+</pre>
+
+<p>Como exemplo, pode-se adicionar algum conte&uacute;do acentuado &agrave; tabela de publica&ccedil;&otilde;es.</p>
+
+<pre>
+	INSERT INTO post (id, title, content, author_id, language)
+	VALUES (4, &#39;il &eacute;tait une fois&#39;, &#39;il &eacute;tait une fois un h&ocirc;tel ...&#39;,
+	2,&#39;french&#39;)
+</pre>
+
+<p>Para ignorar os acentos ao construir um documento, &eacute; poss&iacute;vel simplesmente fazer a seguinte consulta
+	SQL:</p>
+
+<pre>
+	SELECT to_tsvector(post.language, unaccent(post.title)) ||
+	to_tsvector(post.language, unaccent(post.content)) ||
+	to_tsvector(&#39;simple&#39;, unaccent(author.name)) ||
+	to_tsvector(&#39;simple&#39;, unaccent(coalesce(string_agg(tag.name, &#39; &#39;))))
+	FROM post
+	JOIN author ON author.id = post.author_id
+	JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON author.id = post.author_id
+	GROUP BY p.id
+</pre>
+
+<p>Esta t&eacute;cnica funciona, mas consome muitos recursos do servidor e d&aacute; margem para erros. A parte boa
+	&eacute; que construir uma nova configura&ccedil;&atilde;o de busca textual com suporte a caracteres n&atilde;o
+	acentuados &eacute; poss&iacute;vel e simplificado como no exemplo abaixo:</p>
+
+<pre>
+	CREATE TEXT SEARCH CONFIGURATION fr ( COPY = french );
+	ALTER TEXT SEARCH CONFIGURATION fr ALTER MAPPING
+	FOR hword, hword_part, word WITH unaccent, french_stem;
+</pre>
+
+<p>Ao utilizar esta nova configura&ccedil;&atilde;o de busca textual, &eacute; poss&iacute;vel visualizar os lexemas</p>
+
+<pre>
+	SELECT to_tsvector(&#39;french&#39;, &#39;il &eacute;tait une fois&#39;);
+	to_tsvector
+	-------------
+	&#39;fois&#39;:4
+	(1 row)
+
+	SELECT to_tsvector(&#39;fr&#39;, &#39;il &eacute;tait une fois&#39;);
+	to_tsvector
+	--------------------
+	&#39;etait&#39;:2 &#39;fois&#39;:4
+	(1 row)
+</pre>
+
+<p>Esta nova configura&ccedil;&atilde;o devolve o mesmo resultado de quando &eacute; aplicado a extens&atilde;o
+	<em>unaccent</em> na primeira vez e constr&oacute;i o <em>tsvector</em> do resultado.
+</p>
+
+<pre>
+	SELECT to_tsvector(&#39;french&#39;, unaccent(&#39;il &eacute;tait une fois&#39;));
+	to_tsvector
+	--------------------
+	&#39;etait&#39;:2 &#39;fois&#39;:4
+	(1 row)
+</pre>
+
+<p>O n&uacute;mero de lexemas &eacute; diferente porque <em>il &eacute;tait une</em> s&atilde;o <em>stop words</em>
+	(palavras irrelevantes) em franc&ecirc;s. Seria um problema manter estas <em>stop words</em> no documento de
+	exemplo? &Eacute; um caso a se pensar, uma vez que <em>etait</em> n&atilde;o &eacute; realmente uma <em>stop
+		word</em> pois est&aacute; escrito de forma incorreta.</p>
+
+<pre>
+	SELECT to_tsvector(&#39;fr&#39;, &#39;H&ocirc;tel&#39;) @@ to_tsquery(&#39;hotels&#39;) as result;
+	result
+	--------
+	t
+	(1 row)
+</pre>
+
+<p>Ao criar uma configura&ccedil;&atilde;o de busca <strong>n&atilde;o acentuada</strong> para cada idioma que uma
+	publica&ccedil;&atilde;o(post) possa ser escrito e ao manter este valor em post.language, ent&atilde;o pode-se
+	manter a mesma consulta do documento anterior.</p>
+
+<pre>
+	SELECT to_tsvector(post.language, post.title) ||
+	to_tsvector(post.language, post.content) ||
+	to_tsvector(&#39;simple&#39;, author.name) ||
+	to_tsvector(&#39;simple&#39;, coalesce(string_agg(tag.name, &#39; &#39;)))
+	FROM post
+	JOIN author ON author.id = post.author_id
+	JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON author.id = post.author_id
+	GROUP BY p.id
+</pre>
+
+<p>Caso seja necess&aacute;rio criar uma configura&ccedil;&atilde;o para se obter palavras n&atilde;o acentuadas de
+	busca textual para cada idioma suportado pelo PostgreSQL, &eacute; poss&iacute;vel fazer este tipo de
+	funcionalidade com os recursos dispon&iacute;veis <a href="https://gist.github.com/rach/9289959">neste
+		reposit&oacute;rio do gist</a>.</p>
+
+<p>O documento criado provavelmente sofrer&aacute; aumento no tamanho, pois agora pode incluir <em>stop
+		words</em>(palavras irrelevantes) n&atilde;o acentuadas, mas &eacute; poss&iacute;vel realizar consultas
+	sem se preocupar com caracteres acentuados. Este exemplo, pode ser &uacute;til nos casos em que se tem um
+	teclado em Ingl&ecirc;s e deseja-se fazer buscas por conte&uacute;do em Franc&ecirc;s.</p>
+
+<h2>Classifica&ccedil;&atilde;o de documentos</h2>
+
+<p>Quando um motor de busca &eacute; constru&iacute;do, um dos desejos &eacute; que este recurso seja capaz de obter os
+	resultados ordenados por relev&acirc;ncia. A classifica&ccedil;&atilde;o de um documento &eacute; baseada em
+	muitos fatores que s&atilde;o <a
+		href="http://www.postgresql.org/docs/9.4/static/textsearch-controls.html#TEXTSEARCH-RANKING">explicados
+		com detalhes na documenta&ccedil;&atilde;o</a> do PostgreSQL.</p>
+
+<p>Para ordenar os resultados por relev&acirc;ncia, o PostgreSQL fornece algumas fun&ccedil;&otilde;es, mas nos exemplos
+	deste artigo ser&atilde;o apresentados apenas 2 deles: <a
+		href="http://www.postgresql.org/docs/9.4/static/textsearch-controls.html">ts_rank()</a> e <a
+		href="http://www.postgresql.org/docs/9.4/static/textsearch-features.html">setweight()</a>.</p>
+
+<p>A fun&ccedil;&atilde;o <a href="http://www.postgresql.org/docs/9.4/static/textsearch-controls.html">setweight</a>
+	permite atribuir um valor de peso para um <em>tsvector</em>. O valor pode ser &#39;A&#39;, &#39;B&#39;,
+	&#39;C&#39; ou &#39;D&#39;.</p>
+
+<pre>
+	SELECT pid, p_title
+	FROM (SELECT post.id as pid,
+	post.title as p_title,
+	setweight(to_tsvector(post.language::regconfig, post.title), &#39;A&#39;) ||
+	setweight(to_tsvector(post.language::regconfig, post.content), &#39;B&#39;) ||
+	setweight(to_tsvector(&#39;simple&#39;, author.name), &#39;C&#39;) ||
+	setweight(to_tsvector(&#39;simple&#39;, coalesce(string_agg(tag.name, &#39; &#39;))), &#39;B&#39;) as document
+	FROM post
+	JOIN author ON author.id = post.author_id
+	JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON tag.id = posts_tags.tag_id
+	GROUP BY post.id, author.id) p_search
+	WHERE p_search.document @@ to_tsquery(&#39;english&#39;, &#39;Endangered &amp; Species&#39;)
+	ORDER BY ts_rank(p_search.document, to_tsquery(&#39;english&#39;, &#39;Endangered &amp; Species&#39;)) DESC;
+</pre>
+
+<p>Na consulta acima, s&atilde;o atribu&iacute;dos diferentes pesos para as diferentes &aacute;reas de um documento. No
+	exemplo, <em>post.title</em> &eacute; mais importante que o <em>post.content</em> e t&atilde;o importante quanto
+	a tag associada. O menos importante &eacute; o atributo <em>author.name</em>.</p>
+
+<p>Isto significa que, ao procurar o termo &#39;Alice&#39;, um documento que contenha este termo em seu t&iacute;tulo
+	seria devolvido antes de um documento que contenha o termo em seu conte&uacute;do que por sua vez seria
+	retornado antes dos documentos que tenham este termo como autor e por &uacute;ltimo documentos que contenham o
+	nome seriam devolvidos.</p>
+
+<p>Com base nos pesos atribu&iacute;dos &agrave;s partes do documento de exemplo, a fun&ccedil;&atilde;o
+	<em>ts_rank()</em> retorna um n&uacute;mero flutuante que representa a relev&acirc;ncia deste documento em
+	rela&ccedil;&atilde;o a consulta.
+</p>
+
+<pre>
+	SELECT ts_rank(to_tsvector(&#39;This is an example of document&#39;),
+	to_tsquery(&#39;example | document&#39;)) as relevancy;
+	relevancy
+	-----------
+	0.0607927
+	(1 row)
+
+
+	SELECT ts_rank(to_tsvector(&#39;This is an example of document&#39;),
+	to_tsquery(&#39;example &#39;)) as relevancy;
+	relevancy
+	-----------
+	0.0607927
+	(1 row)
+
+
+	SELECT ts_rank(to_tsvector(&#39;This is an example of document&#39;),
+	to_tsquery(&#39;example | unkown&#39;)) as relevancy;
+	relevancy
+	-----------
+	0.0303964
+	(1 row)
+
+
+	SELECT ts_rank(to_tsvector(&#39;This is an example of document&#39;),
+	to_tsquery(&#39;example &amp; document&#39;)) as relevancy;
+	relevancy
+	-----------
+	0.0985009
+	(1 row)
+
+
+	SELECT ts_rank(to_tsvector(&#39;This is an example of document&#39;),
+	to_tsquery(&#39;example &amp; unknown&#39;)) as relevancy;
+	relevancy
+	-----------
+	1e-20
+	(1 row)
+</pre>
+
+<p>No entanto, o conceito de relev&acirc;ncia &eacute; vago e muito espec&iacute;fico ao contexto da
+	aplica&ccedil;&atilde;o. Diferentes aplicativos podem exigir informa&ccedil;&otilde;es adicionais para
+	classifica&ccedil;&atilde;o, por exemplo, o tempo de modifica&ccedil;&atilde;o do documento.
+	Fun&ccedil;&otilde;es de classifica&ccedil;&atilde;o nativas, como <em>ts_rank</em> s&atilde;o apenas exemplos.
+	&Eacute; poss&iacute;vel escrever fun&ccedil;&otilde;es de classifica&ccedil;&atilde;o personalizadas e/ou
+	combinar seus resultados com fatores adicionais para atender a necessidades espec&iacute;ficas.</p>
+
+<p>Para ilustrar o par&aacute;grafo anterior, ao promover as publica&ccedil;&otilde;es mais recentes em
+	rela&ccedil;&atilde;o &agrave;s mais antigas, &eacute; poss&iacute;vel dividir o valor da fun&ccedil;&atilde;o
+	<em>ts_rank</em> pela idade do documento +1 (evitando assim a divis&atilde;o por zero).
+</p>
+
+<h2>Otimiza&ccedil;&atilde;o e indexa&ccedil;&atilde;o</h2>
+
+<p>Otimizar a busca em uma tabela &eacute; o objetivo principal apresentado neste artigo. O PostgreSQL suporta a
+	utiliza&ccedil;&atilde;o de fun&ccedil;&otilde;es baseadas em &iacute;ndice, desta forma, &eacute;
+	poss&iacute;vel criar um <a href="http://www.postgresql.org/docs/9.4/static/gin.html">&iacute;ndice do tipo
+		GIN</a> em torno de uma fun&ccedil;&atilde;o <em>tsvector()</em>.</p>
+
+<pre>
+	CREATE INDEX idx_fts_post ON post
+	USING gin(setweight(to_tsvector(language, title),&#39;A&#39;) ||
+	setweight(to_tsvector(language, content), &#39;B&#39;));
+</pre>
+
+<p>&Iacute;ndices do tipo <a href="http://www.postgresql.org/docs/9.1/static/textsearch-indexes.html">GIN ou GiST</a>?
+	Estes dois tipos de &iacute;ndices poderiam ser objeto de um estudo a parte. GiST pode produzir falsos positivos
+	e para evitar isto &eacute; necess&aacute;rio a utiliza&ccedil;&atilde;o de uma tabela extra de pesquisa para
+	confirmar o <em>match</em>. Por outro lado, &iacute;ndices GIN s&atilde;o mais r&aacute;pidos para consultar,
+	mas s&atilde;o maiores e mais lentos para constru&iacute;-los.</p>
+
+<blockquote>
+	<p>Como regra geral, &iacute;ndices GIN s&atilde;o melhores para dados est&aacute;ticos pois as pesquisas
+		s&atilde;o mais r&aacute;pidas. Para dados din&acirc;micos, &iacute;ndices GiST s&atilde;o mais
+		r&aacute;pidos na atualiza&ccedil;&atilde;o.</p>
+
+	<p>Especificamente, &iacute;ndices GiST s&atilde;o muito bons para dados din&acirc;micos e bastante
+		r&aacute;pidos se o n&uacute;mero de palavras &uacute;nicas (lexemas) encontram-se em torno de 100.000,
+		enquanto que &iacute;ndices GIN podem facilmente trabalhar com mais de 100.000 lexemas de uma forma
+		melhor, por&eacute;m s&atilde;o mais lentos para atualizar.</p>
+</blockquote>
+
+<p>No exemplo tratado neste artigo, optou-se por utilizar &iacute;ndices do tipo GIN, por&eacute;m a escolha pode ser
+	discutida e a decis&atilde;o do que utilizar precisa ser analisada baseado no tipo de informa&ccedil;&atilde;o o
+	qual se vai utilizar.</p>
+
+<p>Ainda relacionado ao exemplo tratado neste artigo, h&aacute; um problema t&iacute;pico no esquema de exemplo, o
+	documento encontra-se distribu&iacute;do entre v&aacute;rias tabelas que possuem diferentes pesos. Para um
+	melhor desempenho, &eacute; necess&aacute;rio desnormalizar os dados via triggers ou <a
+		href="http://www.postgresql.org/docs/9.4/static/rules-materializedviews.html">vis&otilde;es
+		materializadas</a>.</p>
+
+<p>Nem sempre &eacute; necess&aacute;rio desnormalizar e, em alguns casos, &eacute; poss&iacute;vel adicionar um
+	&iacute;ndice baseado em fun&ccedil;&atilde;o, como apresentado anteriormente. Alternativamente, &eacute;
+	poss&iacute;vel desnormalizar dados de uma mesma tabela por meio de <a
+		href="http://www.postgresql.org/docs/9.4/static/textsearch-features.html#TEXTSEARCH-UPDATE-TRIGGERS">fun&ccedil;&otilde;es
+		tsvector_update_trigger() ou tsvector_update_trigger_column()</a> do PostgreSQL.</p>
+
+<p>Se for aceit&aacute;vel que se tenha algum atraso antes que um documento possa ser encontrado em uma busca,
+	ent&atilde;o este pode ser um bom caso de uso para uma vis&atilde;o materializada e com isto, seja
+	poss&iacute;vel construir um &iacute;ndice extra sobre esta vis&atilde;o.</p>
+
+<pre>
+	CREATE MATERIALIZED VIEW search_index AS
+	SELECT post.id,
+	post.title,
+	setweight(to_tsvector(post.language::regconfig, post.title), &#39;A&#39;) ||
+	setweight(to_tsvector(post.language::regconfig, post.content), &#39;B&#39;) ||
+	setweight(to_tsvector(&#39;simple&#39;, author.name), &#39;C&#39;) ||
+	setweight(to_tsvector(&#39;simple&#39;, coalesce(string_agg(tag.name, &#39; &#39;))), &#39;A&#39;) as document
+	FROM post
+	JOIN author ON author.id = post.author_id
+	JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON tag.id = posts_tags.tag_id
+	GROUP BY post.id, author.id
+</pre>
+
+<p>Neste caso, a reindexa&ccedil;&atilde;o do motor de busca vai ser t&atilde;o simples como executar periodicamente o
+	comando <em>REFRESH MATERIALIZED VIEW search_index</em>;.</p>
+
+<p>Diante disto, &eacute; poss&iacute;vel adicionar um &iacute;ndice na vis&atilde;o materializada.</p>
+
+<pre>
+	CREATE INDEX idx_fts_search ON search_index USING gin(document);
+</pre>
+
+<p>E a consulta vai se tornar muito mais simples conforme o exemplo abaixo:</p>
+
+<pre>
+	SELECT id as post_id, title
+	FROM search_index
+	WHERE document @@ to_tsquery(&#39;english&#39;, &#39;Endangered &amp; Species&#39;)
+	ORDER BY ts_rank(p_search.document, to_tsquery(&#39;english&#39;, &#39;Endangered &amp; Species&#39;)) DESC;
+</pre>
+
+<p>Caso n&atilde;o exista margem para suportar algum tipo de atraso, ser&aacute; necess&aacute;rio realizar um estudo
+	mais detalhado e investigar um m&eacute;todo alternativo fazendo uso de <em>trigger</em>.</p>
+
+<p>N&atilde;o existe um caminho &uacute;nico para se construir a estrutura de documentos a serem consultados, vai
+	depender do que compreende o documento: uma tabela simples, v&aacute;rias tabelas, v&aacute;rios idiomas,
+	quantidade de dados e quaisquer fatores que sejam relevantes para a busca.</p>
+
+<h2>Erros de ortografia</h2>
+
+<p>O PostgreSQL possui uma extens&atilde;o de nome <a
+		href="http://www.postgresql.org/docs/9.4/static/pgtrgm.html">pg_trgm</a>.</p>
+
+<pre>
+	CREATE EXTENSION pg_trgm;
+</pre>
+
+<p>A extens&atilde;o pg_trgm fornece suporte para <em>trigram</em> que nada mais &eacute; que um <a
+		href="http://en.wikipedia.org/wiki/N-gram">N-gram</a> com N == 3. N-grams s&atilde;o &uacute;teis porque
+	permitem encontrar strings com caracteres semelhantes e, em ess&ecirc;ncia, &eacute; o que representa um erro de
+	ortografia - uma palavra que &eacute; parecida, mas n&atilde;o igual.</p>
+
+<pre>
+	SELECT similarity(&#39;Something&#39;, &#39;something&#39;);
+	similarity
+	------------
+	1
+	(1 row)
+
+	SELECT similarity(&#39;Something&#39;, &#39;samething&#39;);
+	similarity
+	------------
+	0.538462
+	(1 row)
+
+	SELECT similarity(&#39;Something&#39;, &#39;unrelated&#39;);
+	similarity
+	------------
+	0
+	(1 row)
+
+	SELECT similarity(&#39;Something&#39;, &#39;everything&#39;);
+	similarity
+	------------
+	0.235294
+	(1 row)
+
+	SELECT similarity(&#39;Something&#39;, &#39;omething&#39;);
+	similarity
+	------------
+	0.583333
+	(1 row)
+</pre>
+
+<p>Com os exemplos anteriores pode-se verificar que a semelhan&ccedil;a retorna um n&uacute;mero flutuante para
+	representar a similaridade entre duas strings. Para detectar erro de ortografia podemos recolher os lexemas
+	utilizados pelos documentos e comparar as semelhan&ccedil;as com a entrada da pesquisa. Pode-se constatar que
+	0,5 seja um bom n&uacute;mero para testar a similaridade de erro de ortografia. Para isto, primeiramente
+	&eacute; preciso criar uma lista de lexemas exclusivos usados pelos documentos.</p>
+
+<pre>
+	CREATE MATERIALIZED VIEW unique_lexeme AS
+	SELECT word FROM ts_stat(
+	&#39;SELECT to_tsvector(&#39;simple&#39;, post.title) ||
+	to_tsvector(&#39;simple&#39;, post.content) ||
+	to_tsvector(&#39;simple&#39;, author.name) ||
+	to_tsvector(&#39;simple&#39;, coalesce(string_agg(tag.name, &#39; &#39;)))
+	FROM post
+	JOIN author ON author.id = post.author_id
+	JOIN posts_tags ON posts_tags.post_id = posts_tags.tag_id
+	JOIN tag ON tag.id = posts_tags.tag_id
+	GROUP BY post.id, author.id&#39;);
+</pre>
+
+<p>A consulta acima constr&oacute;i uma vis&atilde;o materializada com uma coluna chamada <em>palavra</em> que recebe
+	todos os lexemas exclusivos dos documentos existentes. Novamente foi utilizado a diretiva <em>simple</em> porque
+	o conte&uacute;do do documento pode estar em v&aacute;rios idiomas. Uma vez que esta vis&atilde;o materializada
+	foi criada, &eacute; necess&aacute;rio adicionar um &iacute;ndice para fazer a consulta de similaridade de forma
+	mais r&aacute;pida.</p>
+
+<pre>
+	CREATE INDEX words_idx ON search_words USING gin(word gin_trgm_ops);
+</pre>
+
+<p>Felizmente, lexemas exclusivos usados em motores de busca n&atilde;o s&atilde;o algo que seja alterado constantemente
+	e por este motivo, n&atilde;o ser&aacute; necess&aacute;rio atualizar a view materializada com muita
+	freq&uuml;&ecirc;ncia. Caso seja necess&aacute;rio uma atualiza&ccedil;&atilde;o, pode-se utilizar o comando:
+</p>
+
+<pre>
+	REFRESH MATERIALIZED VIEW unique_lexeme;
+</pre>
+
+<p>Uma vez que o objetivo de construir esta tabela era o de localizar a correspond&ecirc;ncia mais pr&oacute;xima para o
+	texto, a busca se torna muito simples.</p>
+
+<pre>
+	SELECT word
+	WHERE similarity(word, &#39;samething&#39;) &gt; 0.5
+	ORDER BY word &lt;-&gt; &#39;samething&#39;
+	LIMIT 1;
+</pre>
+
+<p>Esta consulta retorna um lexema o qual &eacute; similar o suficiente (&gt; 0,5) com a entrada <em>samething</em>
+	ordenada pelo mais pr&oacute;ximo em primeiro lugar. O operador &lt;-&gt; retorna a &quot;dist&acirc;ncia&quot;
+	entre os argumentos, que &eacute; um valor menor que o valor da fun&ccedil;&atilde;o <a
+		href="http://www.postgresql.org/docs/9.4/static/pgtrgm.html">similarity()</a>.</p>
+
+<p>Ao decidir tratar erros de ortografia em uma busca, &eacute; poss&iacute;vel decidir por n&atilde;o retornar
+	resultados com erros ortogr&aacute;ficos a cada consulta. Al&eacute;m disso, &eacute; poss&iacute;vel decidir
+	por retornar resultados com erros ortogr&aacute;ficos apenas quando a busca n&atilde;o retornar resultados e
+	usar os resultados dessa consulta para fornecer algumas sugest&otilde;es para o usu&aacute;rio.</p>
+
+<p>Tamb&eacute;m &eacute; poss&iacute;vel que os dados possam conter erros ortogr&aacute;ficos, como por exemplo, nos
+	casos em que se tratar de alguma fonte de comunica&ccedil;&atilde;o informal tal como uma rede social, caso em
+	que poder&aacute; obter bons resultados, anexando o lexema similar ao <em>tsquery</em>.</p>
+
+<p>O artigo <a href="http://bartlettpublishing.com/site/bartpub/blog/3/entry/350">Super Fuzzy Searching on
+		PostgreSQL</a> &eacute; uma boa refer&ecirc;ncia sobre o uso de trigrams para o tratamento de erros de
+	ortografia e pesquisa com o PostgreSQL.</p>
+
+<p>No exemplo apresentado neste artigo, a tabela de lexemas &uacute;nicos nunca foi maior que 2000 linhas, mas se o
+	conjunto de dados a ser utilizado possuir mais de 1 milh&atilde;o de lexemas &uacute;nicos usados em todo o
+	documento, &eacute; poss&iacute;vel que ocorram problemas de performance com esta t&eacute;cnica.</p>
+
+<h2>Foreign Data Wrapper (FDW)</h2>
+
+<p><a href="http://www.postgresql.org/docs/9.4/static/ddl-foreign-data.html">Foreign Data Wrapper</a> (FDW) &eacute; uma
+	das grandes caracter&iacute;sticas que vieram com PostgreSQL 9.1. De forma simplificada, este recurso permite
+	que dados externos ao PostgreSQL sejam acessados como se fossem uma tabela regular no banco de dados.</p>
+
+<p>PostgreSQL FDW &eacute; uma implementa&ccedil;&atilde;o que possui cerca de uma d&eacute;cada de idade baseado no
+	padr&atilde;o <a href="https://wiki.postgresql.org/wiki/SQL/MED">SQL/MED</a> (gerenciamento de dados externos) e
+	que cont&eacute;m informa&ccedil;&otilde;es sobre a forma de permiss&atilde;o de acesso &agrave; fontes de dados
+	externas por bancos de dados - arquivos de texto, web services, etc&hellip; - como se fossem tabelas locais,
+	fornecendo f&aacute;cil acesso a estas informa&ccedil;&otilde;es utilizando comandos SQL.</p>
+
+<p>Imagine uma situa&ccedil;&atilde;o em que seja necess&aacute;rio realizar alguma an&aacute;lise de dados de
+	informa&ccedil;&otilde;es que estejam armazenados em um banco de dados externo ao PostgreSQL. No lugar de se ter
+	que escrever scripts para atualizar os dados de um banco para o outro, gra&ccedil;as ao FDW, &eacute;
+	poss&iacute;vel configurar tabelas estrangeiras (foreign tables) e manter estas tabelas atualizadas.</p>
+
+<p>Lenley Hensarling <a
+		href="http://www.infoq.com/articles/breaking-down-data-silos-with-foreign-data-wrappers">recentemente
+		publicou</a> um artigo no InfoQ (em ingl&ecirc;s) sobre como quebrar silos utilizando Foreign Data
+	Wrapper do PostgreSQL.</p>
+
+<p>Existem v&aacute;rias implementa&ccedil;&otilde;es e descri&ccedil;&otilde;es de uso para esta tecnologia que
+	possibilita a an&aacute;lise de dados por meio dos recursos do PostgreSQL totalmente vi&aacute;veis.</p>
+
+<p>Foreign Data Wrappers permitem que os dados por exemplo, estejam armazenados em um banco de dados MySQL enquanto as
+	informa&ccedil;&otilde;es para an&aacute;lise s&atilde;o acessadas a partir do PostgreSQL que pode fornecer
+	capacidades relacionais e anal&iacute;ticas diferenciadas conforme apresentado neste artigo.</p>
+
+<p>O PostgreSQL <a href="https://wiki.postgresql.org/wiki/Foreign_data_wrappers">possui bibliotecas</a> para os mais
+	variados bancos de dados atuais, incluindo <a href="http://pgxn.org/dist/oracle_fdw/">Oracle</a>, <a
+		href="http://kartoza.com/playing-with-foreign-data-wrappers-in-postgresql/">MySQL</a>, <a
+		href="https://www.mssqltips.com/sqlservertip/3663/sql-server-and-postgresql-foreign-data-wrapper-configuration--part-3/">SQL
+		Server</a> e <a href="https://github.com/citusdata/mongo_fdw">MongoDB</a>.</p>
+
+<p><span style="overflow: hidden; display: inline-block; margin: 0.00px 0.00px; border: 0.00px solid #000000; transform: rotate(0.00rad) translateZ(0px); -webkit-transform: rotate(0.00rad) translateZ(0px); width: 645.67px; height: 455.83px;"><img
+			_href="img://image04.jpg" alt="FDW.png"
+			style="margin-left: 0px; margin-top: 0px; transform: rotate(0rad) translateZ(0px); width: 645px; height: 457px;"
+			title="" data-src="articles/postgresql-fts/pt/resources/image04.jpg"
+			src="https://imgopt.infoq.com/fit-in/3000x4000/filters:quality(85)/filters:no_upscale()/articles/postgresql-fts/pt/resources/image04.jpg"
+			rel="share"></span></p>
+
+<h2>Conclus&atilde;o</h2>
+
+<p>&Eacute; fundamental que uma an&aacute;lise para compreens&atilde;o das necessidades seja realizada para entender que
+	caminho tomar.</p>
+
+<p>Muitas vezes, com a falta de informa&ccedil;&atilde;o, algumas aplica&ccedil;&otilde;es s&atilde;o levadas a utilizar
+	ferramentas muito avan&ccedil;adas para suas reais necessidades sem levar em conta que muitas tecnologias de
+	c&oacute;digo aberto existentes atualmente possuem recursos suficientes para atender a demanda, com qualidade
+	nada a desejar comparada a ferramentas pagas e a um custo muito menor.</p>
+
+<p>A vers&atilde;o 9.5 do PostgreSQL dever&aacute; ser lan&ccedil;ada a qualquer momento nos pr&oacute;ximos meses e
+	juntamente com esta nova vers&atilde;o, mais recursos voltados a an&aacute;lise de informa&ccedil;&otilde;es
+	ser&atilde;o lan&ccedil;ados ou melhorados.</p>
